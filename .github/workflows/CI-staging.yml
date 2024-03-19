@@ -6,7 +6,7 @@ on:
     push:
         branches:
             # features will be added to this branch using PRs, not need to re-run the tests on push
-            - '!develop'
+            - 'develop'
             - '!master'
     pull_request:
         branches:
