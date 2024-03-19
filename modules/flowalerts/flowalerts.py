@@ -1,6 +1,4 @@
 import contextlib
-from typing import List
-
 from slips_files.common.imports import *
 
 import json
@@ -389,55 +387,66 @@ class FlowAlerts(IModule):
             # maybe an empty file is downloaded
             return False
 
+    def get_sent_bytes(self, all_flows: Dict[str, dict]) \
+            -> Dict[str, Tuple[int, List[str], str]] :
+        """
+        Returns a dict of sent bytes to all ips in the all_flows dict
+         {
+            contacted_ip: (
+                sum_of_mbs_sent,
+                [uids],
+                last_ts_of_flow_containging_this_contacted_ip
+            )
+        }
+         """
+        bytes_sent = {}
+        for uid, flow in all_flows.items():
+            daddr = flow['daddr']
+            sbytes: int = flow.get('sbytes', 0)
+            ts: str = flow.get('starttime', '')
 
+            if self.is_ignored_ip_data_upload(daddr) or not sbytes:
+                continue
+
+            if daddr in bytes_sent:
+                mbs_sent, uids, _= bytes_sent[daddr]
+                mbs_sent += sbytes
+                uids.append(uid)
+                bytes_sent[daddr] = (mbs_sent, uids, ts)
+            else:
+                bytes_sent[daddr] = (sbytes, [uid], ts)
+
+        return bytes_sent
+    
     def detect_data_upload_in_twid(self, profileid, twid):
         """
         For each contacted ip in this twid,
         check if the total bytes sent to this ip is >= data_exfiltration_threshold
         """
-        def get_sent_bytes(all_flows: dict):
-            """Returns a dict of sent bytes to all ips {contacted_ip: (mbs_sent, [uids])}"""
-            bytes_sent = {}
-            for uid, flow in all_flows.items():
-                daddr = flow['daddr']
-                sbytes: int = flow.get('sbytes', 0)
-
-                if self.is_ignored_ip_data_upload(daddr) or not sbytes:
-                    continue
-
-                if daddr in bytes_sent:
-                    mbs_sent, uids = bytes_sent[daddr]
-                    mbs_sent += sbytes
-                    uids.append(uid)
-                    bytes_sent[daddr] = (mbs_sent, uids)
-                else:
-                    bytes_sent[daddr] = (sbytes, [uid])
-
-            return bytes_sent
-
         all_flows: Dict[str, dict] = self.db.get_all_flows_in_profileid(
             profileid
         )
         if not all_flows:
             return
 
-        bytes_sent: dict = get_sent_bytes(all_flows)
+        bytes_sent: Dict[str, Tuple[int, List[str], str]]
+        bytes_sent = self.get_sent_bytes(all_flows)
 
         for ip, ip_info in bytes_sent.items():
-            ip_info: Tuple[int, List[str]]
-            uids = ip_info[1]
-            bytes_uploaded = ip_info[0]
+            ip_info: Tuple[int, List[str], str]
+            bytes_uploaded, uids, ts = ip_info
             
             mbs_uploaded = utils.convert_to_mb(bytes_uploaded)
             if mbs_uploaded < self.data_exfiltration_threshold:
                 continue
-            
+                
             self.set_evidence.data_exfiltration(
                 ip,
                 mbs_uploaded,
                 profileid,
                 twid,
                 uids,
+                ts
             )
 
 
@@ -731,15 +740,11 @@ class FlowAlerts(IModule):
                 if ip in contacted_ips:
                     return True
         return False
-
-    def check_dns_without_connection(
-            self, domain, answers: list, rcode_name: str,
-            timestamp: str, profileid, twid, uid
-    ):
+    
+    def should_detect_dns_without_conn(self, domain: str, rcode_name: str) \
+            -> bool:
         """
-        Makes sure all cached DNS answers are used in contacted_ips
-        :param contacted_ips:  dict of ips used in a specific tw {ip: uid}
-        """
+        returns False in the following cases
         ## - All reverse dns resolutions
         ## - All .local domains
         ## - The wildcard domain *
@@ -751,7 +756,7 @@ class FlowAlerts(IModule):
         ## - The WPAD domain of windows
         # - When there is an NXDOMAIN as answer, it means
         # the domain isn't resolved, so we should not expect any connection later
-
+        """
         if (
             'arpa' in domain
             or '.local' in domain
@@ -763,6 +768,19 @@ class FlowAlerts(IModule):
 
         ):
             return False
+        return True
+        
+
+    def check_dns_without_connection(
+            self, domain, answers: list, rcode_name: str,
+            timestamp: str, profileid, twid, uid
+    ):
+        """
+        Makes sure all cached DNS answers are used in contacted_ips
+        """
+        if not self.should_detect_dns_without_conn(domain, rcode_name):
+            return False
+        
         # One DNS query may not be answered exactly by UID,
         # but the computer can re-ask the domain,
         # and the next DNS resolution can be
@@ -793,6 +811,7 @@ class FlowAlerts(IModule):
             # the computer to connect to anything
             # self.print(f'No ips in the answer, so ignoring')
             return False
+        
         # self.print(f'The extended DNS query to {domain} had as answers {answers} ')
 
         contacted_ips = self.db.get_all_contacted_ips_in_profileid_twid(
@@ -843,7 +862,7 @@ class FlowAlerts(IModule):
         else:
             # It means we already checked this dns with the Timer process
             # but still no connection for it.
-            self.set_evidence.DNS_without_conn(
+            self.set_evidence.dns_without_conn(
                 domain, timestamp, profileid, twid, uid
             )
             # This UID will never appear again, so we can remove it and
@@ -863,7 +882,7 @@ class FlowAlerts(IModule):
             )
             daddr = ssh_flow_dict['daddr']
             saddr = ssh_flow_dict['saddr']
-            size = ssh_flow_dict['allbytes']
+            size = ssh_flow_dict['sbytes'] + ssh_flow_dict['dbytes']
             self.set_evidence.ssh_successful(
                 twid,
                 saddr,
@@ -958,8 +977,6 @@ class FlowAlerts(IModule):
         else:
             self.detect_successful_ssh_by_slips(uid, timestamp, profileid, twid, auth_success)
 
-
-
     def detect_incompatible_CN(
             self,
             daddr,
@@ -976,6 +993,7 @@ class FlowAlerts(IModule):
         """
         if not issuer:
             return False
+        
         found_org_in_cn = ''
         for org in utils.supported_orgs:
             if org not in issuer.lower():
@@ -1115,7 +1133,7 @@ class FlowAlerts(IModule):
             if answer in invalid_answers and domain != "localhost":
                 # blocked answer found
                 self.set_evidence.invalid_dns_answer(
-                    domain, answer, daddr, profileid, twid, stime, uid
+                    domain, answer, profileid, twid, stime, uid
                 )
                 # delete answer from redis cache to prevent
                 # associating this dns answer with this domain/query and
@@ -1663,8 +1681,8 @@ class FlowAlerts(IModule):
     def check_GRE_tunnel(self, tunnel_info: dict):
         """
         Detects GRE tunnels
-        @param tunnel_flow: dict containing tunnel zeek flow
-        @return: None
+        :param tunnel_info: dict containing tunnel zeek flow
+        :return: None
         """
         tunnel_flow = tunnel_info['flow']
         tunnel_type = tunnel_flow['tunnel_type']
@@ -2107,7 +2125,7 @@ class FlowAlerts(IModule):
 
         if msg := self.get_msg('tw_closed'):
             profileid_tw = msg['data'].split('_')
-            profileid = f'{profileid_tw[0]}_{profileid_tw[1]}',
+            profileid = f'{profileid_tw[0]}_{profileid_tw[1]}'
             twid = profileid_tw[-1]
             self.detect_data_upload_in_twid(profileid, twid)
 

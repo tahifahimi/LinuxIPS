@@ -18,14 +18,18 @@ RUN apt update && apt install -y --no-install-recommends \
     git \
     curl \
     gnupg \
+    lsb-release \
  && echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_20.04/ /' | tee /etc/apt/sources.list.d/security:zeek.list \
- && curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_20.04/Release.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/security_zeek.gpg > /dev/null
+ && curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_20.04/Release.key | gpg --dearmor > /etc/apt/trusted.gpg.d/security_zeek.gpg \
+ && curl -fsSL https://packages.redis.io/gpg |  gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" > /etc/apt/sources.list.d/redis.list
+
 
 # Install Slips dependencies.
-RUN apt update && apt install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    redis-server \
     zeek \
+    redis \
     python3-pip \
     python3-certifi \
     python3-dev \
@@ -33,8 +37,8 @@ RUN apt update && apt install -y --no-install-recommends \
     file \
     lsof \
     net-tools \
-    iproute2 \
     iptables \
+    iproute2 \
     python3-tzlocal \
     nfdump \
     tshark \
@@ -48,23 +52,33 @@ RUN apt update && apt install -y --no-install-recommends \
     iputils-ping \
     yara \
     tmux \
+    golang \
  && ln -s /opt/zeek/bin/zeek /usr/local/bin/bro
 
 
 RUN git clone -b master https://github.com/stratosphereips/StratosphereLinuxIPS ${SLIPS_DIR}/
-RUN (cd ${SLIPS_DIR} && chmod 774 slips.py)
+WORKDIR ${SLIPS_DIR}
+RUN git submodule sync && git pull --recurse-submodules
+# Switch to Slips installation dir when login.
+RUN chmod 774 slips.py &&  git submodule init && git submodule update
 
 # Change the configuration file to have use_p2p = yes
 RUN sed -i "s/use_p2p = no/use_p2p = yes/g" ${SLIPS_DIR}/config/slips.conf
-# Change the configuration file to have analysis_direction = out
-RUN sed -i "s/analysis_direction = out/analysis_direction = yes/g" ${SLIPS_DIR}/config/slips.conf
 
+# Change the configuration file to have analysis_direction = out
+RUN sed -i "s/analysis_direction = out/analysis_direction = all/g" ${SLIPS_DIR}/config/slips.conf
+
+# build the pigeon and Add pigeon to path
+SHELL ["/bin/bash", "-c"]
+RUN cd p2p4slips && go build && echo "export PATH=$PATH:/StratosphereLinuxIPS/p2p4slips/" >> ~/.bashrc && source ~/.bashrc
+
+WORKDIR ${SLIPS_DIR}
 # Upgrade pip3 and install slips requirements
 RUN pip3 install --upgrade pip
 RUN pip3 install -r ${SLIPS_DIR}/docker/macosm1-P2P-image/requirements-macos-m1-docker.txt
 
 # For Kalipso:
-RUN curl -fsSL https://deb.nodesource.com/setup_19.x | bash - && apt install -y --no-install-recommends nodejs
+RUN curl -fsSL https://deb.nodesource.com/setup_21.x |  bash -  && apt install -y --no-install-recommends nodejs
 
 # Switch to kalipso dir to install node dependencies
 WORKDIR ${SLIPS_DIR}/modules/kalipso
@@ -72,6 +86,4 @@ RUN npm install
 
 # Switch to Slips installation dir when login.
 WORKDIR ${SLIPS_DIR}
-
-#CMD redis-server --daemonize yes && /bin/bash
-CMD /bin/bash
+CMD redis-server --daemonize yes && /bin/bash

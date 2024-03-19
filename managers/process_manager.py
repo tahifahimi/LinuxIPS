@@ -128,7 +128,7 @@ class ProcessManager:
             pbar_finished=self.pbar_finished,
         )
         pbar.start()
-        self.main.db.store_process_PID(pbar.name, int(pbar.pid))
+        self.main.db.store_pid(pbar.name, int(pbar.pid))
         self.main.print(f"Started {green('PBar')} process ["
                         f"PID {green(pbar.pid)}]")
         return pbar
@@ -151,7 +151,7 @@ class ProcessManager:
             1,
             0,
         )
-        self.main.db.store_process_PID("Profiler", int(profiler_process.pid))
+        self.main.db.store_pid("Profiler", int(profiler_process.pid))
         return profiler_process
 
     def start_evidence_process(self):
@@ -168,7 +168,7 @@ class ProcessManager:
             1,
             0,
         )
-        self.main.db.store_process_PID("Evidence", int(evidence_process.pid))
+        self.main.db.store_pid("Evidence", int(evidence_process.pid))
         return evidence_process
 
     def start_input_process(self):
@@ -193,7 +193,7 @@ class ProcessManager:
             1,
             0,
         )
-        self.main.db.store_process_PID("Input", int(input_process.pid))
+        self.main.db.store_pid("Input", int(input_process.pid))
         return input_process
 
     def kill_process_tree(self, pid: int):
@@ -350,7 +350,7 @@ class ProcessManager:
                 self.termination_event,
             )
             module.start()
-            self.main.db.store_process_PID(module_name, int(module.pid))
+            self.main.db.store_pid(module_name, int(module.pid))
             self.print_started_module(
                 module_name, module.pid, modules_to_call[module_name]["description"]
             )
@@ -515,10 +515,29 @@ class ProcessManager:
 
         start_time = self.main.db.get_slips_start_time()
         return utils.get_time_diff(start_time, end_date, return_type="minutes")
-
-    def should_stop(self):
+    
+    def stop_slips(self) -> bool:
         """
-        returns true if the channel received the stop msg
+        determines whether slips should stop
+        based on the following:
+        1. is slips still receiving new flows?
+        2. did slips the control channel recv the stop_slips
+        3. is a debugger present?
+        """
+        if self.should_run_non_stop():
+            return False
+        
+        if (
+                self.stop_slips_received()
+                or self.slips_is_done_receiving_new_flows()
+        ):
+            return True
+        
+        return False
+
+    def stop_slips_received(self):
+        """
+        returns true if the channel received the 'stop_slips' msg
         """
         message = self.main.c1.get_message(timeout=0.01)
         if (
@@ -633,7 +652,7 @@ class ProcessManager:
             timeout_seconds: float = timeout * 60
 
             # close all tws
-            self.main.db.check_TW_to_close(close_all=True)
+            self.main.db.check_tw_to_close(close_all=True)
             analysis_time = self.get_analysis_time()
             self.main.print(
                 f"Analysis of {self.main.input_information} "

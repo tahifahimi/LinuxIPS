@@ -41,8 +41,9 @@ class SetEvidnceHelper:
         twid_number: int =  int(twid.replace("timewindow", ""))
         description: str =  (f'connection to a young domain: {domain} '
                              f'registered {age} days ago.')
-        if answers:
-            attacker = answers[0]
+        # set evidence for all the young domain dns answers
+        for attacker in answers:
+            attacker: str
             evidence = Evidence(
                     evidence_type=EvidenceType.YOUNG_DOMAIN,
                     attacker=Attacker(
@@ -137,7 +138,8 @@ class SetEvidnceHelper:
         'srcip' outside the localnet or the 'dstip'?
         """
         srcip = profileid.split('_')[-1]
-        # the attacker here is the IP found to be private and outside the localnet
+        # the attacker here is the IP found to be
+        # private and outside the localnet
         if ip_outside_localnet == 'srcip':
             attacker = Attacker(
                 direction=Direction.SRC,
@@ -149,6 +151,7 @@ class SetEvidnceHelper:
                 victim_type=IoCType.IP,
                 value=daddr
             )
+            threat_level = ThreatLevel.LOW
             description = f'A connection from a private IP ({srcip}) ' \
                           f'outside of the used local network ' \
                           f'{self.db.get_local_network()}. To IP: {daddr} '
@@ -163,6 +166,7 @@ class SetEvidnceHelper:
                 victim_type=IoCType.IP,
                 value=srcip
             )
+            threat_level = ThreatLevel.HIGH
             description = f'A connection to a private IP ({daddr}) ' \
                           f'outside of the used local network ' \
                           f'{self.db.get_local_network()}. ' \
@@ -172,8 +176,8 @@ class SetEvidnceHelper:
 
 
         confidence = 1.0
-        threat_level = ThreatLevel.HIGH
-
+        
+        twid_number = int(twid.replace("timewindow", ""))
         evidence = Evidence(
             evidence_type=EvidenceType.DIFFERENT_LOCALNET,
             attacker=attacker,
@@ -182,7 +186,7 @@ class SetEvidnceHelper:
             description=description,
             victim=victim,
             profile=ProfileID(ip=srcip),
-            timewindow=TimeWindow(number=int(twid.replace("timewindow", ""))),
+            timewindow=TimeWindow(number=twid_number),
             uid=[uid],
             timestamp=timestamp,
             conn_count=1,
@@ -406,7 +410,7 @@ class SetEvidnceHelper:
 
         self.db.set_evidence(evidence)
 
-    def DNS_without_conn(
+    def dns_without_conn(
         self,
         domain: str,
         timestamp: str,
@@ -696,7 +700,7 @@ class SetEvidnceHelper:
             self,
             proto: str,
             daddr: str,
-            dport: str,
+            dport: int,
             saddr: str,
             twid: str,
             uid: str,
@@ -837,7 +841,7 @@ class SetEvidnceHelper:
             twid: str,
             saddr: str,
             daddr: str,
-            size,
+            size: int,
             uid: str,
             timestamp: str,
             by='',
@@ -847,6 +851,7 @@ class SetEvidnceHelper:
         This is not strictly a detection, but we don't have
         a better way to show it.
         The threat_level is 0.01 to show that this is not a detection
+        :param size: src and dst bytes sent and recieved
         """
 
         confidence: float = 0.8
@@ -856,7 +861,7 @@ class SetEvidnceHelper:
         ip_identification: str = self.db.get_ip_identification(daddr)
         description: str = (
             f'SSH successful to IP {daddr}. {ip_identification}. '
-            f'From IP {saddr}. Size: {str(size)}. Detection model {by}.'
+            f'From IP {saddr}. Sent bytes: {str(size)}. Detection model {by}.'
             f' Confidence {confidence}'
         )
 
@@ -1387,7 +1392,7 @@ class SetEvidnceHelper:
                 value=saddr
             ),
             threat_level=ThreatLevel.INFO,
-            confidence=confidence,
+            confidence=0.6,
             description=description,
             profile=ProfileID(ip=saddr),
             timewindow=TimeWindow(number=twid_number),

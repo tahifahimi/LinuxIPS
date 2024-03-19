@@ -8,6 +8,7 @@ tzlocal
 cabby
 stix2
 certifi
+tensorflow
 colorama
 Keras
 validators
@@ -23,7 +24,7 @@ pytest-mock
 pytest-xdist
 slackclient
 scipy
-sklearn
+scikit-learn
 GitPython
 protobuf
 blinker
@@ -41,4 +42,3 @@ yappi
 pytest-sugar
 memray
 aid_hash
-tensorflow
